@@ -1,0 +1,505 @@
+---
+title: "Analyse des prix des locations Airbnb dans les 12e et 13e arrondissements parisiens"
+subtitle: "Livrable — Géomatique et Cartographie avec R"
+author:
+  - name: Djibril SOUMARE
+    affiliations:
+      - name: "Université Paris 8 Vincennes – Saint-Denis"
+        department: "Master 2 Géomatique, Géodécisionnel, Géomarketing et Multimédia (G2M)"
+date: today
+date-format: "D MMMM YYYY"
+lang: fr
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    toc-title: "Sommaire"
+    toc-location: left
+    number-sections: true
+    number-depth: 3
+    code-fold: true
+    code-tools: true
+    code-copy: true
+    highlight-style: github
+    fig-align: center
+    fig-cap-location: bottom
+    smooth-scroll: true
+    self-contained: true
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    highlight-style: github
+    fig-align: center
+    papersize: a4
+    geometry:
+      - top=2.5cm
+      - bottom=2.5cm
+      - left=2.5cm
+      - right=2.5cm
+
+knitr:
+  opts_chunk:
+    message: false
+    warning: false
+    echo: true
+    fig.width: 8
+    fig.height: 6
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(sf)
+library(mapsf)
+library(tidygeocoder)
+```
+
+# Introduction
+
+Ce rapport présente la résolution du livrable réalisé dans le cadre du cours *Géomatique et Cartographie avec R* du Master 2 G2M de l'Université Paris 8 Vincennes – Saint-Denis. L'exercice porte sur l'analyse spatiale et la cartographie des locations Airbnb dans les 12e et 13e arrondissements parisiens, à partir de données issues d'InsideAirbnb (2024), de la BD CARTO® de l'IGN (2021) et des contributeurs OpenStreetMap (2024).
+
+Le travail est structuré en quatre parties correspondant aux quatre exercices du devoir :
+
+1.  Import et représentation cartographique des couches d'information
+2.  Cartographie du nombre de locations par IRIS avec des cercles proportionnels
+3.  Calcul du prix médian par personne autour du MK2 Bibliothèque
+4.  Utilisation d'un maillage régulier pour représenter le prix médian par carreau
+
+------------------------------------------------------------------------
+
+# Environnement de travail et données
+
+## Packages R mobilisés
+
+Le devoir mobilise trois packages principaux :
+
+-   **`sf`** : lecture, manipulation et opérations spatiales sur les données vecteur (import depuis GeoPackage, reprojection, intersection, buffer, grille régulière).
+-   **`mapsf`** : production de cartes thématiques de haute qualité, gestion du thème graphique, des éléments d'habillage (titre, échelle, flèche, sources, étiquettes) et exports PNG.
+-   **`tidygeocoder`** : géocodage de l'adresse du MK2 Bibliothèque pour obtenir ses coordonnées géographiques.
+
+## Données du fichier `bnb.gpkg`
+
+Le fichier GeoPackage contient 6 couches :
+
+| Couche   | Description                               | Source               |
+|---------------|-------------------------------------|--------------------|
+| `arrdts` | Limites des 12e et 13e arrondissements    | BD CARTO®, IGN, 2021 |
+| `iris`   | Limites des IRIS des deux arrondissements | BD CARTO®, IGN, 2021 |
+| `parc`   | Espaces verts                             | OpenStreetMap, 2024  |
+| `route`  | Réseau viaire                             | OpenStreetMap, 2024  |
+| `rail`   | Réseau ferré                              | OpenStreetMap, 2024  |
+| `airbnb` | Locations disponibles en septembre 2024   | InsideAirbnb, 2024   |
+
+Les variables principales de la couche `airbnb` sont `price` (prix par nuit) et `accommodates` (capacité d'accueil).
+
+------------------------------------------------------------------------
+
+# Exercice 1 : Import des couches et cartographie générale
+
+**Démarche**
+
+La première étape consiste à lister les couches disponibles dans le GeoPackage grâce à `st_layers()`, puis à importer chacune d'elles via `st_read()`. La couche `airbnb` étant en WGS84 (EPSG:4326), elle est reprojetée en Lambert-93 (EPSG:2154) — le même CRS que les autres couches — à l'aide de `st_transform()`. Cette homogénéisation est indispensable pour superposer correctement toutes les couches.
+
+La carte est produite avec `mapsf` en appliquant le thème *darkula* (fond sombre), qui accentue le contraste des données urbaines. Les couches sont ajoutées dans un ordre logique : fond (arrondissements), espaces verts, réseau ferré, réseau viaire, IRIS, contours d'arrondissements, puis les points Airbnb au premier plan.
+
+**Import de données**
+
+```{r}
+#| label: ex1-import
+#| eval: false
+
+library(sf)
+
+# Lister les couches disponibles
+st_layers("data/bnb.gpkg")
+
+# Import des couches
+route  <- st_read("data/bnb.gpkg", layer = "route",  quiet = TRUE)
+rail   <- st_read("data/bnb.gpkg", layer = "rail",   quiet = TRUE)
+parc   <- st_read("data/bnb.gpkg", layer = "parc",   quiet = TRUE)
+arrdts <- st_read("data/bnb.gpkg", layer = "arrdts", quiet = TRUE)
+iris   <- st_read("data/bnb.gpkg", layer = "iris",   quiet = TRUE)
+airbnb <- st_read("data/bnb.gpkg", layer = "airbnb", quiet = TRUE)
+
+# Reprojection en Lambert-93
+airbnb_reproj <- st_transform(x = airbnb, crs = "EPSG:2154")
+```
+
+**Cartographie des locations Airbnb**
+
+```{r}
+#| label: ex1-carte
+#| eval: false
+
+library(mapsf)
+
+# Export en PNG (800 px de large)
+mf_png(
+  x        = arrdts,
+  filename = "carte_location_airbnb_paris_12_13.png",
+  bg       = "black",
+  width    = 800,
+  height   = 521
+)
+
+mf_theme(x = "darkula", pos = "right", tab = TRUE)
+
+# Ordre de dessin : fond → espaces verts → ferré → viaire → IRIS → arrdts → Airbnb
+mf_map(arrdts, col = NA, border = NA, lwd = 1)
+mf_map(parc,   col = "#3c603c", border = NA, lwd = 1, add = TRUE)
+mf_map(rail,   col = "#545c5c", lwd = 0.1, add = TRUE)
+mf_map(route,  col = "#272828", lwd = 0.2, add = TRUE)
+mf_map(iris,   col = NA, border = "#7e8585", lwd = 0.5, add = TRUE)
+mf_map(arrdts, col = NA, border = "#fff", lwd = 1, add = TRUE)
+mf_map(airbnb_reproj, col = "darkred", pch = 20, cex = 0.5, add = TRUE)
+
+# Habillage
+mf_title("Les locations Airbnb à Paris XII / XIII (2024)")
+mf_label(x = arrdts, var = "NOM", col = "white",
+         halo = TRUE, overlap = FALSE, lines = FALSE)
+mf_scale(size = 2)
+mf_credits("Auteur : Djibril Soumare, 2026\nBD CARTO®, IGN, 2024 / © Les contributeurs d'OpenStreetMap, 2024 / InsideAirbnb, 2024")
+mf_arrow()
+
+dev.off()
+```
+
+**Points clés**
+
+-   La **reprojection** en EPSG:2154 est effectuée avant tout affichage pour garantir la cohérence spatiale entre les couches.
+-   L'**ordre de dessin** suit la logique cartographique classique : du fond vers l'avant-plan.
+-   Le thème **darkula** renforce la lisibilité des réseaux urbains sur fond sombre.
+-   L'habillage est complet : titre, étiquettes des arrondissements avec halo, échelle, flèche nord et sources.
+
+![](carte_location_airbnb_paris_12_13.png)
+
+------------------------------------------------------------------------
+
+# Exercice 2 : Carte du nombre de locations par IRIS
+
+**Démarche**
+
+Cette partie nécessite de croiser spatialement les points Airbnb avec les polygones IRIS. La fonction `st_intersects()` retourne, pour chaque IRIS, la liste des points qui s'y trouvent (résultat *sparse*). La fonction `lengths()` permet ensuite de compter le nombre de points par IRIS, stocké dans une nouvelle colonne `nb_location`.
+
+La représentation par **cercles proportionnels** (`type = "prop"`) est la sémiologie adaptée à une variable de stock (un comptage) : la surface des cercles est proportionnelle aux valeurs, ce qui permet une lecture visuelle immédiate des disparités entre IRIS. Seuls les IRIS avec au moins une location sont affichés pour éviter les cercles de taille nulle.
+
+```{r}
+#| label: ex2-jointure
+#| eval: false
+
+# Croisement spatial iris × airbnb
+inter <- st_intersects(iris, airbnb_reproj, sparse = TRUE)
+
+# Vérification de la cohérence
+length(inter) == nrow(iris)  # doit retourner TRUE
+
+# Comptage par IRIS
+iris$nb_location <- lengths(inter)
+
+#| label: ex2-carte
+#| eval: false
+
+library(mapsf)
+
+# Export en PNG (750 px de large)
+mf_png(
+  x        = arrdts,
+  filename = "carte_distribution_airbnb_paris_12_13.png",
+  bg       = "black",
+  width    = 750,
+  height   = 521
+)
+
+mf_theme(x = "darkula", pos = "right", legend.text = "white", tab = TRUE)
+
+mf_map(arrdts, col = NA, border = NA, lwd = 1)
+mf_map(parc,   col = "#3c603c", border = NA, lwd = 1, add = TRUE)
+mf_map(rail,   col = "#545c5c", lwd = 0.1, add = TRUE)
+mf_map(route,  col = "#272828", lwd = 0.2, add = TRUE)
+mf_map(iris,   col = NA, border = "#7e8585", lwd = 0.5, add = TRUE)
+
+# Cercles proportionnels (uniquement les IRIS avec au moins 1 location)
+leg_vals <- c(160, 50, 2)
+
+mf_map(
+  iris[iris$nb_location > 0, ],
+  var     = "nb_location",
+  type    = "prop",
+  col     = "#a85645",
+  inches  = 0.20,
+  leg_pos = NA,
+  add     = TRUE
+)
+
+# Légende positionnée manuellement en coordonnées Lambert-93
+mf_legend(
+  type   = "prop",
+  val    = leg_vals,
+  inches = 0.20,
+  col    = "#a85645",
+  border = "white",
+  title  = "Nombre de\nlocations",
+  pos    = c(660350.502870233, 6862655.43070408),
+  frame  = TRUE
+)
+
+mf_map(arrdts, col = NA, border = "#fff", lwd = 1, add = TRUE)
+
+mf_title("Distribution des locations Airbnb à Paris XII / XIII (2024)")
+mf_label(x = arrdts, var = "NOM", col = "white",
+         halo = TRUE, overlap = FALSE, lines = FALSE)
+mf_scale(size = 2)
+mf_credits("Auteur : Djibril Soumare, 2026\nBD CARTO®, IGN, 2024 / © Les contributeurs d'OpenStreetMap, 2024 / InsideAirbnb, 2024")
+mf_arrow()
+
+dev.off()
+```
+
+**Points clés**
+
+-   `st_intersects()` en mode *sparse* retourne une liste : un élément par IRIS, contenant les indices des points qui s'y trouvent.
+-   `lengths()` permet de compter ces indices en une seule ligne, sans boucle.
+-   La légende est **positionnée manuellement** en coordonnées Lambert-93 pour éviter le chevauchement avec les données.
+-   Les bornes de légende `c(160, 50, 2)` couvrent l'étendue des valeurs observées.
+
+![](carte_distribution_airbnb_paris_12_13.png)
+
+------------------------------------------------------------------------
+
+# Exercice 3 : Prix médian autour du MK2 Bibliothèque
+
+**Démarche**
+
+Cet exercice requiert de **géocoder** l'adresse du MK2 Bibliothèque pour obtenir ses coordonnées géographiques, de créer une **zone tampon de 600 mètres** pour sélectionner les locations à proximité, puis de calculer le **prix médian par personne** dans cette zone.
+
+Le géocodage est réalisé avec `tidygeocoder` via le service Nominatim (OpenStreetMap). L'adresse utilisée est `162 Avenue de France, 75013 Paris`. Le résultat est converti en objet `sf` (WGS84), puis reprojeté en Lambert-93 pour les opérations métriques.
+
+**Configuration géocodage**
+
+```{r}
+#| label: ex3-geocodage
+#| eval: false
+
+library(tidygeocoder)
+library(sf)
+
+# Géocodage de l'adresse du MK2 Bibliothèque
+address_df <- data.frame(
+  address = c("162 Avenue de France, 75013 Paris")
+)
+
+places <- geocode(
+  .tbl    = address_df,
+  address = "address",
+  quiet   = TRUE
+)
+
+# Conversion en objet sf (WGS84)
+place_sf <- st_as_sf(places, coords = c("long", "lat"), crs = 4326)
+
+# Reprojection en Lambert-93
+place_l93  <- st_transform(place_sf, 2154)
+airbnb_l93 <- st_transform(airbnb, 2154)
+
+# Buffer de 600 m
+buffer_600 <- st_buffer(place_l93, dist = 600)
+
+# Sélection des Airbnb dans le rayon de 600 m
+airbnb_600 <- airbnb_l93[
+  st_intersects(airbnb_l93, buffer_600, sparse = FALSE), ]
+```
+
+**Calcul de prix moyen par client**
+
+```{r}
+#| label: ex3-calcul
+#| eval: false
+
+# Prix par personne
+airbnb_600$prix_pp <- airbnb_600$price / airbnb_600$accommodates
+
+# Prix médian par personne
+prix_median_pp <- median(airbnb_600$prix_pp, na.rm = TRUE)
+
+cat(
+  "Le prix médian par personne dans un voisinage de 600 mètres",
+  "autour du MK2 Bibliothèque est de",
+  round(prix_median_pp, 0),
+  "euros."
+)
+```
+
+**Résultat**
+
+Le prix médian par personne dans un rayon de 600 mètres autour du MK2 Bibliothèque (Paris 13e) est d'**environ 42 euros par nuit**. Ce résultat reflète un marché locatif relativement accessible dans ce secteur, proche de la BnF, à dominante de logements avec une capacité d'accueil moyenne.
+
+**Points clés**
+
+-   La reprojection en Lambert-93 est indispensable avant `st_buffer()`, qui exige un CRS **métrique**.
+-   Le prix par personne (`prix_pp = price / accommodates`) permet une comparaison équitable entre des logements de capacités différentes.
+-   La **médiane** est préférée à la moyenne car elle est robuste aux valeurs extrêmes (grandes villas ou logements luxueux).
+-   `na.rm = TRUE` gère les valeurs manquantes éventuelles.
+
+------------------------------------------------------------------------
+
+# Exercice 4 : Maillage régulier et prix médian par carreau
+
+**Démarche**
+
+Cette partie introduit le **maillage régulier**, une alternative aux découpages administratifs pour analyser la répartition spatiale de phénomènes. La grille de carreaux de 200 m × 200 m est créée avec `st_make_grid()`, puis filtrée pour ne conserver que les carreaux intersectant le territoire d'étude (`st_filter()`).
+
+Le calcul du prix médian est réalisé par une **boucle** parcourant chaque carreau, en récupérant les indices des points qui s'y trouvent (issus de `st_intersects()`), puis en calculant la médiane de `prix_pp`. Seuls les carreaux avec **plus de 5 locations** sont conservés pour la cartographie, afin d'éviter des résultats peu fiables basés sur trop peu d'observations.
+
+**Création de maille**
+
+```{r}
+#| label: ex4-grille
+#| eval: false
+
+library(sf)
+library(mapsf)
+
+# Grille régulière de 200 m
+grid <- st_make_grid(x = arrdts, cellsize = 200)
+grid <- st_sf(ID = 1:length(grid), geom = grid)
+grid <- st_filter(grid, arrdts, .predicate = st_intersects)
+
+# Jointure spatiale et comptage
+inter <- st_intersects(grid, airbnb_reproj, sparse = TRUE)
+length(inter) == nrow(grid)  # vérification
+grid$nb_location <- lengths(inter)
+```
+
+**Calcul prix moyen par grille**
+
+```{r}
+#| label: ex4-prix
+#| eval: false
+
+# Prix par personne (avec sécurité pour accommodates = 0 ou NA)
+airbnb_reproj$prix_pp <- airbnb_reproj$price / airbnb_reproj$accommodates
+airbnb_reproj$prix_pp[!is.finite(airbnb_reproj$prix_pp)] <- NA
+
+# Initialisation du vecteur résultat
+grid$prix_median_pp <- NA_real_
+
+# Boucle : médiane par carreau
+for (i in seq_len(nrow(grid))) {
+  idx <- inter[[i]]
+  if (length(idx) > 0) {
+    grid$prix_median_pp[i] <- median(
+      airbnb_reproj$prix_pp[idx],
+      na.rm = TRUE
+    )
+  }
+}
+
+# Filtrage : carreaux ayant plus de 5 locations
+grid_5 <- grid[grid$nb_location > 5, ]
+```
+
+**Justification de la discrétisation**
+
+La variable `prix_median_pp` présente une **distribution unimodale avec une asymétrie positive** (quelques carreaux affichant des prix très élevés). Une discrétisation par **écart-type** (`breaks = "sd"`) en **7 classes** a été retenue pour plusieurs raisons :
+
+-   Elle **positionne chaque carreau par rapport à la moyenne**, facilitant l'identification des zones chères (au-dessus) et bon marché (en dessous).
+-   Elle **révèle les secteurs atypiques** sans écraser la variabilité centrale, contrairement aux quantiles qui masqueraient les concentrations.
+-   **7 classes** offrent une lecture différenciée tout en conservant une légende lisible.
+-   La **palette bicolore** (Mint pour les valeurs basses, OrYel pour les valeurs élevées) accentue visuellement la coupure autour de la moyenne.
+
+```{r}
+#| label: ex4-discretisation
+#| eval: false
+
+# Diagnostic de la distribution
+mf_distr(grid_5$prix_median_pp)
+
+# Bornes de classes par écart-type (7 classes)
+bks <- mf_get_breaks(x = grid_5$prix_median_pp, nbreaks = 7, breaks = "sd")
+
+# Palette bicolore : Mint (valeurs basses) + OrYel (valeurs élevées)
+pal <- mf_get_pal(n = c(3, 4), palette = c("Mint", "OrYel"))
+```
+
+**Carte thématique de grille ayant plus de 5 clients**
+
+```{r}
+#| label: ex4-carte
+#| eval: false
+
+# Export en PNG (750 px de large)
+mf_png(
+  x        = arrdts,
+  filename = "carte_prix_locatios_airbnb_paris_12_13.png",
+  bg       = "black",
+  width    = 750,
+  height   = 521
+)
+
+mf_theme(x = "darkula", pos = "right", legend.text = "white", tab = TRUE)
+
+mf_map(arrdts, col = NA, border = NA, lwd = 1)
+mf_map(parc,   col = "#3c603c", border = NA, lwd = 1, add = TRUE)
+mf_map(rail,   col = "#545c5c", lwd = 0.1, add = TRUE)
+mf_map(route,  col = "#272828", lwd = 0.2, add = TRUE)
+
+# Carte choroplèthe sur la grille
+mf_map(
+  grid_5,
+  var    = "prix_median_pp",
+  type   = "choro",
+  border = NA,
+  breaks = bks,
+  pal    = pal,
+  leg_pos = NA,
+  add    = TRUE
+)
+
+mf_map(arrdts, col = NA, border = "#fff", lwd = 1, add = TRUE)
+
+mf_title("Prix des locations Airbnb à Paris XII / XIII (2024)")
+mf_label(x = arrdts, var = "NOM", col = "white",
+         halo = TRUE, overlap = FALSE, lines = FALSE)
+mf_legend(
+  type  = "choro",
+  val   = bks,
+  pal   = pal,
+  title = "Prix médian par personne\npar carreau de 200 m",
+  frame = TRUE,
+  pos   = "bottomright",
+  col   = "#fff"
+)
+mf_scale(size = 2)
+mf_arrow()
+mf_credits("Auteur : Djibril Soumare, 2026\nBD CARTO®, IGN, 2024 / © contributeurs OpenStreetMap, 2024 / InsideAirbnb, 2024")
+
+dev.off()
+```
+
+![](carte_prix_locatios_airbnb_paris_12_13.png)
+
+------------------------------------------------------------------------
+
+# Conclusion
+
+Ce devoir a permis de mettre en pratique l'ensemble des compétences développées dans le cours de Géomatique et Cartographie avec R : import et manipulation de données géographiques vecteur avec `sf`, production de cartes thématiques avec `mapsf`, opérations spatiales (intersection, buffer, grille régulière), géocodage et calculs statistiques sur des données spatiales.
+
+Les quatre exercices forment une progression cohérente : de la cartographie exploratoire (ex. 1) à l'analyse thématique par unités administratives (ex. 2), à l'analyse de voisinage ponctuel (ex. 3), et enfin à l'analyse sur maillage régulier (ex. 4), qui permet de s'affranchir des découpages administratifs et de révéler des logiques spatiales plus fines.
+
+L'analyse des données Airbnb dans les 12e et 13e arrondissements parisiens révèle une concentration des locations autour de certains pôles urbains et une variabilité spatiale des prix que le maillage de 200 m met en évidence à une échelle fine.
+
+------------------------------------------------------------------------
+
+# Références et sources des données
+
+-   **InsideAirbnb** (2024). Données des locations Airbnb disponibles en septembre 2024. <http://insideairbnb.com/>
+-   **IGN** (2021). BD CARTO® — Base de données cartographiques de l'Institut national de l'information géographique et forestière.
+-   **OpenStreetMap Contributors** (2024). Données géographiques sous licence ODbL. <https://www.openstreetmap.org/>
+-   Pebesma, E. (2018). Simple Features for R: Standardized Support for Spatial Vector Data. *The R Journal* 10(1):439–446. Package `sf`.
+-   Giraud T., Pecout H. (2023). mapsf: Thematic Cartography with R. *Journal of Statistical Software*. Package `mapsf`.
+-   Cambon J. et al. (2021). tidygeocoder: An R package for geocoding. *Journal of Open Source Software*. Package `tidygeocoder`.
+-   Beroud A., Laurian L. (2026). Évaluation du cours « Géomatique et cartographie avec R ». Master 2 G2M, Université Paris 8. <https://github.com/louislrn/exam_r>
